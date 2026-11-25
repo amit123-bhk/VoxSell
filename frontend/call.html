@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VoxSell — Live Voice Agent Tester</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: #0b0f19;
+      color: #f1f5f9;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      padding: 2rem 1rem;
+    }
+    .container {
+      max-width: 800px;
+      width: 100%;
+      background: #111827;
+      border: 1px solid #1f2937;
+      border-radius: 12px;
+      padding: 1.5rem;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid #1f2937;
+      padding-bottom: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    h1 { font-size: 1.5rem; color: #38bdf8; display: flex; align-items: center; gap: 8px; }
+    .badge {
+      font-size: 0.8rem;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      font-weight: 600;
+      background: #374151;
+      color: #9ca3af;
+    }
+    .badge.active { background: #065f46; color: #34d399; }
+    .badge.speaking { background: #1e3a8a; color: #60a5fa; }
+    .badge.interrupted { background: #831843; color: #f472b6; }
+
+    .controls {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 1.5rem;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    input[type="text"] {
+      background: #1f2937;
+      border: 1px solid #374151;
+      color: #f9fafb;
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      flex: 1;
+      min-width: 200px;
+    }
+    button {
+      padding: 10px 20px;
+      border-radius: 8px;
+      border: none;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      font-size: 0.95rem;
+    }
+    .btn-start { background: #2563eb; color: white; }
+    .btn-start:hover { background: #1d4ed8; }
+    .btn-stop { background: #dc2626; color: white; display: none; }
+    .btn-stop:hover { background: #b91c1c; }
+
+    .metrics-panel {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 10px;
+      background: #182234;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 1.5rem;
+    }
+    .metric-card { text-align: center; }
+    .metric-val { font-size: 1.25rem; font-weight: 700; color: #f8fafc; }
+    .metric-val.pass { color: #34d399; }
+    .metric-lbl { font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; margin-top: 2px; }
+
+    .conversation {
+      height: 380px;
+      background: #030712;
+      border: 1px solid #1f2937;
+      border-radius: 8px;
+      padding: 1rem;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-bottom: 1rem;
+    }
+    .message {
+      max-width: 80%;
+      padding: 10px 14px;
+      border-radius: 10px;
+      font-size: 0.95rem;
+      line-height: 1.4;
+    }
+    .message.user {
+      align-self: flex-end;
+      background: #1e3a8a;
+      color: #eff6ff;
+      border-bottom-right-radius: 2px;
+    }
+    .message.agent {
+      align-self: flex-start;
+      background: #1f2937;
+      color: #f3f4f6;
+      border-bottom-left-radius: 2px;
+      border-left: 3px solid #38bdf8;
+    }
+    .interim { opacity: 0.6; font-style: italic; }
+
+    .text-fallback {
+      display: flex;
+      gap: 8px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <header>
+      <h1>
+        <span>🎙️</span> VoxSell Voice Agent
+      </h1>
+      <div id="statusBadge" class="badge">Idle</div>
+    </header>
+
+    <!-- Call Connection Controls -->
+    <div class="controls">
+      <input type="text" id="leadInput" placeholder="Enter Lead Phone or ID" value="+19876543210">
+      <button id="btnStart" class="btn-start" onclick="startCall()">Start Call</button>
+      <button id="btnStop" class="btn-stop" onclick="stopCall()">End Call</button>
+    </div>
+
+    <!-- Live Turn Latency Telemetry -->
+    <div class="metrics-panel">
+      <div class="metric-card">
+        <div id="metricSTT" class="metric-val">-</div>
+        <div class="metric-lbl">STT Endpointing</div>
+      </div>
+      <div class="metric-card">
+        <div id="metricLLM" class="metric-val">-</div>
+        <div class="metric-lbl">LLM 1st Token</div>
+      </div>
+      <div class="metric-card">
+        <div id="metricTTS" class="metric-val">-</div>
+        <div class="metric-lbl">TTS 1st Byte</div>
+      </div>
+      <div class="metric-card">
+        <div id="metricTotal" class="metric-val">-</div>
+        <div class="metric-lbl">Total Latency (<1.5s)</div>
+      </div>
+    </div>
+
+    <!-- Live Transcript Box -->
+    <div id="conversationBox" class="conversation">
+      <div class="message agent">
+        <strong>Riya:</strong> Ready when you are! Click "Start Call" and speak naturally to test the live voice loop.
+      </div>
+    </div>
+
+    <!-- Optional Text Fallback / Simulator -->
+    <div class="text-fallback">
+      <input type="text" id="txtInput" placeholder="Or type a message to test voice loop..." onkeypress="handleKey(event)">
+      <button class="btn-start" onclick="sendTextMessage()">Send</button>
+    </div>
+  </div>
+
+  <script>
+    let socket = null;
+    let audioContext = null;
+    let micStream = null;
+    let audioWorkletNode = null;
+    let scriptProcessor = null;
+    let playbackQueue = [];
+    let isPlaying = false;
+    let nextPlayTime = 0;
+    let activeSources = [];
+
+    const statusBadge = document.getElementById("statusBadge");
+    const btnStart = document.getElementById("btnStart");
+    const btnStop = document.getElementById("btnStop");
+    const conversationBox = document.getElementById("conversationBox");
+    const leadInput = document.getElementById("leadInput");
+    const txtInput = document.getElementById("txtInput");
+
+    function setStatus(text, className) {
+      statusBadge.textContent = text;
+      statusBadge.className = "badge " + (className || "");
+    }
+
+    function appendMessage(speaker, text, isInterim = false) {
+      let currentMsg = document.getElementById("active_" + speaker);
+      if (isInterim) {
+        if (!currentMsg) {
+          currentMsg = document.createElement("div");
+          currentMsg.id = "active_" + speaker;
+          currentMsg.className = "message " + speaker + " interim";
+          conversationBox.appendChild(currentMsg);
+        }
+        currentMsg.innerHTML = `<strong>${speaker === 'user' ? 'You' : 'Riya'}:</strong> ${text}`;
+      } else {
+        if (currentMsg) {
+          currentMsg.remove();
+        }
+        const msgDiv = document.createElement("div");
+        msgDiv.className = "message " + speaker;
+        msgDiv.innerHTML = `<strong>${speaker === 'user' ? 'You' : 'Riya'}:</strong> ${text}`;
+        conversationBox.appendChild(msgDiv);
+      }
+      conversationBox.scrollTop = conversationBox.scrollHeight;
+    }
+
+    async function startCall() {
+      const leadId = leadInput.value.trim() || "+19876543210";
+      const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const host = window.location.hostname ? `${window.location.hostname}:8000` : "localhost:8000";
+      const wsUrl = `${wsProtocol}//${host}/ws/call/${encodeURIComponent(leadId)}`;
+
+      setStatus("Connecting...", "speaking");
+      btnStart.style.display = "none";
+      btnStop.style.display = "inline-block";
+
+      try {
+        // Initialize Web Audio Context at 16kHz
+        audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+        nextPlayTime = audioContext.currentTime;
+
+        // Capture Microphone
+        micStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            sampleRate: 16000,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          }
+        });
+
+        // Open WebSocket
+        socket = new WebSocket(wsUrl);
+        socket.binaryType = "arraybuffer";
+
+        socket.onopen = () => {
+          setStatus("In Call (Listening)", "active");
+          startAudioCapture();
+        };
+
+        socket.onmessage = async (event) => {
+          if (typeof event.data === "string") {
+            const data = JSON.parse(event.data);
+            handleServerEvent(data);
+          } else {
+            // Binary frame = 16kHz linear PCM from TTS
+            handleIncomingAudioChunk(event.data);
+          }
+        };
+
+        socket.onerror = (err) => {
+          console.error("WebSocket error:", err);
+          setStatus("Connection Error", "interrupted");
+        };
+
+        socket.onclose = () => {
+          setStatus("Call Ended", "");
+          stopCall();
+        };
+
+      } catch (err) {
+        console.error("Failed to start call:", err);
+        alert("Microphone permission or connection failed: " + err.message);
+        stopCall();
+      }
+    }
+
+    function startAudioCapture() {
+      const source = audioContext.createMediaStreamSource(micStream);
+      // Use 2048 sample buffer (~128ms) for low latency
+      scriptProcessor = audioContext.createScriptProcessor(2048, 1, 1);
+
+      scriptProcessor.onaudioprocess = (e) => {
+        if (!socket || socket.readyState !== WebSocket.OPEN) return;
+        const inputData = e.inputBuffer.getChannelData(0);
+        // Convert Float32 to 16-bit linear PCM
+        const pcm16 = new Int16Array(inputData.length);
+        for (let i = 0; i < inputData.length; i++) {
+          const s = Math.max(-1, Math.min(1, inputData[i]));
+          pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+        }
+        socket.send(pcm16.buffer);
+      };
+
+      source.connect(scriptProcessor);
+      scriptProcessor.connect(audioContext.destination);
+    }
+
+    function handleServerEvent(data) {
+      if (data.type === "transcript") {
+        appendMessage(data.speaker, data.text, !data.is_final);
+      } else if (data.type === "agent_token") {
+        let agentMsg = document.getElementById("active_agent_turn_" + data.turn);
+        if (!agentMsg) {
+          agentMsg = document.createElement("div");
+          agentMsg.id = "active_agent_turn_" + data.turn;
+          agentMsg.className = "message agent";
+          agentMsg.innerHTML = `<strong>Riya:</strong> `;
+          conversationBox.appendChild(agentMsg);
+        }
+        agentMsg.innerHTML += data.token;
+        conversationBox.scrollTop = conversationBox.scrollHeight;
+        setStatus("Riya Speaking...", "speaking");
+      } else if (data.type === "barge_in") {
+        console.log("Barge-in: clearing playback buffer!");
+        stopAllAudioPlayback();
+        setStatus("Interrupted (Listening)", "interrupted");
+      } else if (data.type === "latency_metrics") {
+        document.getElementById("metricSTT").textContent = data.stt_ms + " ms";
+        document.getElementById("metricLLM").textContent = data.llm_first_token_ms + " ms";
+        document.getElementById("metricTTS").textContent = data.tts_first_byte_ms + " ms";
+        const totalElem = document.getElementById("metricTotal");
+        totalElem.textContent = data.total_turn_ms + " ms";
+        totalElem.className = "metric-val " + (data.target_achieved ? "pass" : "");
+        setStatus("In Call (Listening)", "active");
+      }
+    }
+
+    function handleIncomingAudioChunk(arrayBuffer) {
+      if (!audioContext) return;
+      const pcm16 = new Int16Array(arrayBuffer);
+      const float32 = new Float32Array(pcm16.length);
+      for (let i = 0; i < pcm16.length; i++) {
+        float32[i] = pcm16[i] / 32768.0;
+      }
+
+      const audioBuffer = audioContext.createBuffer(1, float32.length, 16000);
+      audioBuffer.getChannelData(0).set(float32);
+
+      const source = audioContext.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(audioContext.destination);
+
+      const now = audioContext.currentTime;
+      if (nextPlayTime < now) {
+        nextPlayTime = now + 0.02; // small 20ms jitter buffer
+      }
+
+      source.start(nextPlayTime);
+      nextPlayTime += audioBuffer.duration;
+      activeSources.push(source);
+
+      source.onended = () => {
+        const idx = activeSources.indexOf(source);
+        if (idx !== -1) activeSources.splice(idx, 1);
+        if (activeSources.length === 0 && socket && socket.readyState === WebSocket.OPEN) {
+          setStatus("In Call (Listening)", "active");
+        }
+      };
+    }
+
+    function stopAllAudioPlayback() {
+      activeSources.forEach(src => {
+        try { src.stop(); } catch(e) {}
+      });
+      activeSources = [];
+      if (audioContext) {
+        nextPlayTime = audioContext.currentTime;
+      }
+    }
+
+    function stopCall() {
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        try { socket.send(JSON.stringify({ type: "hangup" })); } catch(e) {}
+        socket.close();
+      }
+      stopAllAudioPlayback();
+
+      if (micStream) {
+        micStream.getTracks().forEach(track => track.stop());
+        micStream = null;
+      }
+      if (scriptProcessor) {
+        try { scriptProcessor.disconnect(); } catch(e) {}
+        scriptProcessor = null;
+      }
+      if (audioContext) {
+        try { audioContext.close(); } catch(e) {}
+        audioContext = null;
+      }
+
+      socket = null;
+      btnStart.style.display = "inline-block";
+      btnStop.style.display = "none";
+      setStatus("Idle", "");
+    }
+
+    function sendTextMessage() {
+      const text = txtInput.value.trim();
+      if (!text || !socket || socket.readyState !== WebSocket.OPEN) return;
+      socket.send(JSON.stringify({ type: "user_text", text: text }));
+      txtInput.value = "";
+    }
+
+    function handleKey(e) {
+      if (e.key === "Enter") sendTextMessage();
+    }
+  </script>
+</body>
+</html>
